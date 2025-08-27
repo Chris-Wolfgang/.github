@@ -12,34 +12,64 @@ trim_trailing_whitespace = true
 
 # C# files
 [*.cs]
-# Use file-scoped namespaces
+# Use file-scoped namespaces (C# 10+)
 csharp_style_namespace_declarations = file_scoped:suggestion
 
-# Prefer `var` when type is apparent
+# Prefer 'var' for apparent types, explicit for others
 csharp_style_var_when_type_is_apparent = true:suggestion
-# Prefer explicit type when type is not apparent
 csharp_style_var_elsewhere = false:suggestion
 
 # Prefer expression-bodied members
 csharp_style_expression_bodied_methods = true:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
 
-# Prefer 'this.' qualification for members
+# Prefer 'this.' qualification for fields/properties
 dotnet_style_qualification_for_field = true:suggestion
 dotnet_style_qualification_for_property = true:suggestion
 dotnet_style_qualification_for_method = false:suggestion
 
-# Analyzer severity: treat warnings as errors for analyzers
-dotnet_analyzer_diagnostic.severity = error
+# Require braces for all control blocks
+csharp_prefer_braces = true:error
 
-# Example: StyleCop rule as error (if StyleCop is installed)
-dotnet_diagnostic.SA1101.severity = error
+# Require explicit access modifiers
+dotnet_style_require_accessibility_modifiers = always:error
 
-# Suppress a specific warning (example: unused variable)
+# Place 'using' directives inside namespace
+dotnet_style_using_directive_placement = inside_namespace:error
+
+# Prefer switch expressions when possible
+csharp_style_prefer_switch_expression = true:suggestion
+
+# Prefer pattern matching over 'is' with cast
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+
+# Prefer interpolated strings over string.Format
+csharp_style_prefer_interpolated_string = true:suggestion
+
+# StyleCop: require XML documentation for public members
+dotnet_diagnostic.SA1600.severity = error
+
+# StyleCop: enforce PascalCase for class names
+dotnet_diagnostic.SA1300.severity = error
+
+# StyleCop: enforce camelCase for local variables
+dotnet_diagnostic.SA1309.severity = error
+
+# StyleCop: require using directives to be ordered alphabetically
+dotnet_diagnostic.SA1210.severity = warning
+
+# StyleCop: require space after keywords (e.g., if, for)
+dotnet_diagnostic.SA1000.severity = warning
+
+# StyleCop: require single-line comments to begin with a capital letter
+dotnet_diagnostic.SA1101.severity = suggestion
+
+# Suppress specific compiler warning (example: unused variable)
 dotnet_diagnostic.CS0168.severity = none
 
-# Require 'using' directives to be inside namespaces
-dotnet_sort_system_directives_first = true
-dotnet_separate_import_directive_groups = true
+# Analyzer severity: treat all analyzer issues as errors in CI
+dotnet_analyzer_diagnostic.severity = error
 
 # Organize usings on save (supported in some editors)
 dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = true
