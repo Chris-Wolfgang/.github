@@ -38,6 +38,7 @@ jobs:
       - name: Add maintenance-task issues to the Maintenance project
         env:
           GH_TOKEN: ${{ secrets.MAINTENANCE_PROJECT_TOKEN }}
+          # Account login — used for the cross-repo issue search.
           PROJECT_OWNER: Chris-Wolfgang
           PROJECT_NUMBER: '6'
         run: |
@@ -61,8 +62,11 @@ jobs:
           echo "Found $(printf '%s\n' "$ISSUES" | grep -c .) open maintenance-task issue(s)."
 
           # URLs already on the project board.
+          # Use --owner "@me" (resolves via `viewer`) rather than the literal
+          # login: gh's user-vs-org owner lookup fails with "unknown owner type"
+          # under a fine-grained PAT, whereas `viewer` always resolves.
           EXISTING=$(gh project item-list "$PROJECT_NUMBER" \
-            --owner "$PROJECT_OWNER" \
+            --owner "@me" \
             --limit 10000 \
             --format json --jq '.items[].content.url // empty')
 
@@ -80,7 +84,7 @@ jobs:
             # addProjectV2ItemById is idempotent — re-adding an item already on
             # the project is a harmless no-op (Projects v2 cannot hold the same
             # content twice), so this is safe even if EXISTING was incomplete.
-            gh project item-add "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$url"
+            gh project item-add "$PROJECT_NUMBER" --owner "@me" --url "$url"
             echo "  added $url"
             added=$((added + 1))
           done <<< "$NEW"
