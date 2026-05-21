@@ -22,6 +22,12 @@ on:
     - cron: '0 * * * *'   # hourly
   workflow_dispatch: {}     # manual "Run workflow" button for an immediate sweep
 
+# Only one sweep at a time. A scheduled run and a manual dispatch (or a long run
+# overrunning the next hour) would otherwise overlap and do redundant work.
+concurrency:
+  group: sweep-maintenance-project
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -38,6 +44,9 @@ jobs:
           set -euo pipefail
 
           # Every open issue labeled `maintenance-task`, across the whole account.
+          # NOTE: the GitHub Search API hard-caps results at 1000 — there is no
+          # pagination past that. A backlog approaching 1000 OPEN maintenance
+          # tasks would be a problem in its own right; this is not expected to bind.
           ISSUES=$(gh search issues \
             --owner "$PROJECT_OWNER" \
             --label "maintenance-task" \
@@ -49,25 +58,31 @@ jobs:
             echo "No open maintenance-task issues found. Nothing to sweep."
             exit 0
           fi
+          echo "Found $(printf '%s\n' "$ISSUES" | grep -c .) open maintenance-task issue(s)."
 
-          count=$(printf '%s\n' "$ISSUES" | grep -c . || true)
-          echo "Found $count open maintenance-task issue(s)."
-
-          # URLs already on the project board (skip these).
+          # URLs already on the project board.
           EXISTING=$(gh project item-list "$PROJECT_NUMBER" \
             --owner "$PROJECT_OWNER" \
-            --limit 2000 \
+            --limit 10000 \
             --format json --jq '.items[].content.url // empty')
+
+          # Issues not yet on the board — single pass (O(N+M)) via grep -f.
+          NEW=$(printf '%s\n' "$ISSUES" | grep -Fxv -f <(printf '%s\n' "$EXISTING") || true)
+
+          if [ -z "$NEW" ]; then
+            echo "All maintenance-task issues are already on project #$PROJECT_NUMBER."
+            exit 0
+          fi
 
           added=0
           while IFS= read -r url; do
             [ -z "$url" ] && continue
-            if printf '%s\n' "$EXISTING" | grep -qxF "$url"; then
-              continue
-            fi
+            # addProjectV2ItemById is idempotent — re-adding an item already on
+            # the project is a harmless no-op (Projects v2 cannot hold the same
+            # content twice), so this is safe even if EXISTING was incomplete.
             gh project item-add "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$url"
             echo "  added $url"
             added=$((added + 1))
-          done <<< "$ISSUES"
+          done <<< "$NEW"
 
           echo "Sweep complete. Added $added new item(s) to project #$PROJECT_NUMBER."
