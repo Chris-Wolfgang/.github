@@ -1,0 +1,88 @@
+name: Sweep maintenance-task issues into the Maintenance project
+
+# Cross-repo aggregation for the Maintenance framework.
+#
+# GitHub's built-in "Auto-add to project" workflow only targets ONE repository,
+# so it can't aggregate the whole fleet. This scheduled job instead searches the
+# entire Chris-Wolfgang account for issues labeled `maintenance-task` and adds any
+# that aren't already on the Maintenance project board (project #6).
+#
+# Because it searches by label across the whole account, new repos are picked up
+# automatically — there is no per-repo registration to maintain.
+#
+# Requires a repo secret `MAINTENANCE_PROJECT_TOKEN`: a PAT with `repo` + `project`
+# scopes (classic), or a fine-grained PAT with Issues:read + Projects:read/write.
+#
+# NOTE: GitHub disables scheduled workflows after 60 days with no commits to the
+# repo. If the hourly run stops firing, push any commit here (or just use the
+# manual "Run workflow" button, which always works).
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # hourly
+  workflow_dispatch: {}     # manual "Run workflow" button for an immediate sweep
+
+# Only one sweep at a time. A scheduled run and a manual dispatch (or a long run
+# overrunning the next hour) would otherwise overlap and do redundant work.
+concurrency:
+  group: sweep-maintenance-project
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add maintenance-task issues to the Maintenance project
+        env:
+          GH_TOKEN: ${{ secrets.MAINTENANCE_PROJECT_TOKEN }}
+          PROJECT_OWNER: Chris-Wolfgang
+          PROJECT_NUMBER: '6'
+        run: |
+          set -euo pipefail
+
+          # Every open issue labeled `maintenance-task`, across the whole account.
+          # NOTE: the GitHub Search API hard-caps results at 1000 — there is no
+          # pagination past that. A backlog approaching 1000 OPEN maintenance
+          # tasks would be a problem in its own right; this is not expected to bind.
+          ISSUES=$(gh search issues \
+            --owner "$PROJECT_OWNER" \
+            --label "maintenance-task" \
+            --state open \
+            --limit 1000 \
+            --json url --jq '.[].url')
+
+          if [ -z "$ISSUES" ]; then
+            echo "No open maintenance-task issues found. Nothing to sweep."
+            exit 0
+          fi
+          echo "Found $(printf '%s\n' "$ISSUES" | grep -c .) open maintenance-task issue(s)."
+
+          # URLs already on the project board.
+          EXISTING=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$PROJECT_OWNER" \
+            --limit 10000 \
+            --format json --jq '.items[].content.url // empty')
+
+          # Issues not yet on the board — single pass (O(N+M)) via grep -f.
+          NEW=$(printf '%s\n' "$ISSUES" | grep -Fxv -f <(printf '%s\n' "$EXISTING") || true)
+
+          if [ -z "$NEW" ]; then
+            echo "All maintenance-task issues are already on project #$PROJECT_NUMBER."
+            exit 0
+          fi
+
+          added=0
+          while IFS= read -r url; do
+            [ -z "$url" ] && continue
+            # addProjectV2ItemById is idempotent — re-adding an item already on
+            # the project is a harmless no-op (Projects v2 cannot hold the same
+            # content twice), so this is safe even if EXISTING was incomplete.
+            gh project item-add "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$url"
+            echo "  added $url"
+            added=$((added + 1))
+          done <<< "$NEW"
+
+          echo "Sweep complete. Added $added new item(s) to project #$PROJECT_NUMBER."
