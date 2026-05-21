@@ -1,0 +1,73 @@
+name: Sweep maintenance-task issues into the Maintenance project
+
+# Cross-repo aggregation for the Maintenance framework.
+#
+# GitHub's built-in "Auto-add to project" workflow only targets ONE repository,
+# so it can't aggregate the whole fleet. This scheduled job instead searches the
+# entire Chris-Wolfgang account for issues labeled `maintenance-task` and adds any
+# that aren't already on the Maintenance project board (project #6).
+#
+# Because it searches by label across the whole account, new repos are picked up
+# automatically — there is no per-repo registration to maintain.
+#
+# Requires a repo secret `MAINTENANCE_PROJECT_TOKEN`: a PAT with `repo` + `project`
+# scopes (classic), or a fine-grained PAT with Issues:read + Projects:read/write.
+#
+# NOTE: GitHub disables scheduled workflows after 60 days with no commits to the
+# repo. If the hourly run stops firing, push any commit here (or just use the
+# manual "Run workflow" button, which always works).
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # hourly
+  workflow_dispatch: {}     # manual "Run workflow" button for an immediate sweep
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add maintenance-task issues to the Maintenance project
+        env:
+          GH_TOKEN: ${{ secrets.MAINTENANCE_PROJECT_TOKEN }}
+          PROJECT_OWNER: Chris-Wolfgang
+          PROJECT_NUMBER: '6'
+        run: |
+          set -euo pipefail
+
+          # Every open issue labeled `maintenance-task`, across the whole account.
+          ISSUES=$(gh search issues \
+            --owner "$PROJECT_OWNER" \
+            --label "maintenance-task" \
+            --state open \
+            --limit 1000 \
+            --json url --jq '.[].url')
+
+          if [ -z "$ISSUES" ]; then
+            echo "No open maintenance-task issues found. Nothing to sweep."
+            exit 0
+          fi
+
+          count=$(printf '%s\n' "$ISSUES" | grep -c . || true)
+          echo "Found $count open maintenance-task issue(s)."
+
+          # URLs already on the project board (skip these).
+          EXISTING=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$PROJECT_OWNER" \
+            --limit 2000 \
+            --format json --jq '.items[].content.url // empty')
+
+          added=0
+          while IFS= read -r url; do
+            [ -z "$url" ] && continue
+            if printf '%s\n' "$EXISTING" | grep -qxF "$url"; then
+              continue
+            fi
+            gh project item-add "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$url"
+            echo "  added $url"
+            added=$((added + 1))
+          done <<< "$ISSUES"
+
+          echo "Sweep complete. Added $added new item(s) to project #$PROJECT_NUMBER."
