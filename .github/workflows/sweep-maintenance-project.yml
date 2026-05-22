@@ -93,13 +93,25 @@ jobs:
           # Category single-select must be populated here. Only items whose
           # Category is still unset are touched, so steady-state runs are cheap.
           PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "@me" --format json --jq '.id')
-          FIELDS=$(gh project field-list "$PROJECT_NUMBER" --owner "@me" --limit 50 --format json)
+          FIELDS=$(gh project field-list "$PROJECT_NUMBER" --owner "@me" --limit 100 --format json)
           CAT_FIELD_ID=$(printf '%s' "$FIELDS" | jq -r '.fields[] | select(.name=="Category") | .id')
+          if [ -z "$CAT_FIELD_ID" ]; then
+            echo "ERROR: Category field not found on project #$PROJECT_NUMBER — cannot categorize." >&2
+            exit 1
+          fi
 
-          opt_id() {  # opt_id <option-name>  ->  single-select option id
-            printf '%s' "$FIELDS" | jq -r --arg n "$1" \
-              '.fields[] | select(.name=="Category") | .options[] | select(.name==$n) | .id'
-          }
+          # Resolve the 7 category option ids up front; fail fast if any is
+          # missing rather than silently skipping items at edit time.
+          declare -A OPT
+          for name in Security Performance Testing Cleanup Docs API CI/CD; do
+            oid=$(printf '%s' "$FIELDS" | jq -r --arg n "$name" \
+              '.fields[] | select(.name=="Category") | .options[] | select(.name==$n) | .id')
+            if [ -z "$oid" ]; then
+              echo "ERROR: Category option '$name' not found on project #$PROJECT_NUMBER." >&2
+              exit 1
+            fi
+            OPT[$name]="$oid"
+          done
 
           # Items missing a Category, with their labels pipe-joined (labels
           # themselves contain spaces, so a space delimiter would be ambiguous).
@@ -120,8 +132,7 @@ jobs:
               *"|maintenance - CI/CD|"*)       opt="CI/CD" ;;
             esac
             [ -z "$opt" ] && continue
-            oid=$(opt_id "$opt")
-            [ -z "$oid" ] && continue
+            oid="${OPT[$opt]}"
             if gh project item-edit --id "$itemid" --project-id "$PROJECT_ID" \
                  --field-id "$CAT_FIELD_ID" --single-select-option-id "$oid" >/dev/null 2>&1; then
               cat_set=$((cat_set + 1))
