@@ -44,6 +44,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          # === 1. Add new maintenance-task issues to the board ==============
           # Every open issue labeled `maintenance-task`, across the whole account.
           # NOTE: the GitHub Search API hard-caps results at 1000 — there is no
           # pagination past that. A backlog approaching 1000 OPEN maintenance
@@ -73,20 +74,61 @@ jobs:
           # Issues not yet on the board — single pass (O(N+M)) via grep -f.
           NEW=$(printf '%s\n' "$ISSUES" | grep -Fxv -f <(printf '%s\n' "$EXISTING") || true)
 
-          if [ -z "$NEW" ]; then
-            echo "All maintenance-task issues are already on project #$PROJECT_NUMBER."
-            exit 0
-          fi
-
           added=0
-          while IFS= read -r url; do
-            [ -z "$url" ] && continue
-            # addProjectV2ItemById is idempotent — re-adding an item already on
-            # the project is a harmless no-op (Projects v2 cannot hold the same
-            # content twice), so this is safe even if EXISTING was incomplete.
-            gh project item-add "$PROJECT_NUMBER" --owner "@me" --url "$url"
-            echo "  added $url"
-            added=$((added + 1))
-          done <<< "$NEW"
+          if [ -n "$NEW" ]; then
+            while IFS= read -r url; do
+              [ -z "$url" ] && continue
+              # addProjectV2ItemById is idempotent — re-adding an item already on
+              # the project is a harmless no-op (Projects v2 cannot hold the same
+              # content twice), so this is safe even if EXISTING was incomplete.
+              gh project item-add "$PROJECT_NUMBER" --owner "@me" --url "$url"
+              echo "  added $url"
+              added=$((added + 1))
+            done <<< "$NEW"
+          fi
+          echo "Added $added new item(s)."
 
-          echo "Sweep complete. Added $added new item(s) to project #$PROJECT_NUMBER."
+          # === 2. Set the Category field from each item's maintenance label ==
+          # Projects v2 has no built-in "label -> field" workflow, so the board's
+          # Category single-select must be populated here. Only items whose
+          # Category is still unset are touched, so steady-state runs are cheap.
+          PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "@me" --format json --jq '.id')
+          FIELDS=$(gh project field-list "$PROJECT_NUMBER" --owner "@me" --limit 50 --format json)
+          CAT_FIELD_ID=$(printf '%s' "$FIELDS" | jq -r '.fields[] | select(.name=="Category") | .id')
+
+          opt_id() {  # opt_id <option-name>  ->  single-select option id
+            printf '%s' "$FIELDS" | jq -r --arg n "$1" \
+              '.fields[] | select(.name=="Category") | .options[] | select(.name==$n) | .id'
+          }
+
+          # Items missing a Category, with their labels pipe-joined (labels
+          # themselves contain spaces, so a space delimiter would be ambiguous).
+          ITEMS=$(gh project item-list "$PROJECT_NUMBER" --owner "@me" --limit 10000 \
+            --format json --jq '.items[] | select(.category == null) | [.id, ((.labels // []) | join("|"))] | @tsv')
+
+          cat_set=0
+          while IFS=$'\t' read -r itemid labels; do
+            [ -z "$itemid" ] && continue
+            opt=""
+            case "|$labels|" in
+              *"|maintenance - cleanup|"*)     opt=Cleanup ;;
+              *"|maintenance - performance|"*) opt=Performance ;;
+              *"|maintenance - testing|"*)     opt=Testing ;;
+              *"|maintenance - docs|"*)        opt=Docs ;;
+              *"|maintenance - security|"*)    opt=Security ;;
+              *"|maintenance - API|"*)         opt=API ;;
+              *"|maintenance - CI/CD|"*)       opt="CI/CD" ;;
+            esac
+            [ -z "$opt" ] && continue
+            oid=$(opt_id "$opt")
+            [ -z "$oid" ] && continue
+            if gh project item-edit --id "$itemid" --project-id "$PROJECT_ID" \
+                 --field-id "$CAT_FIELD_ID" --single-select-option-id "$oid" >/dev/null 2>&1; then
+              cat_set=$((cat_set + 1))
+            else
+              echo "  warn: could not set Category for item $itemid"
+            fi
+          done <<< "$ITEMS"
+          echo "Categorized $cat_set item(s)."
+
+          echo "Sweep complete."
