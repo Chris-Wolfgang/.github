@@ -1,0 +1,52 @@
+# Secrets scan for this repository, modelled on repo-template's pr.yaml `secrets-scan` job
+# (same checkout pin, permissions, triggers and pinned gitleaks CLI). DevSkim is not run:
+# this repository contains no source code, only workflows and Markdown.
+
+name: Secrets Scan
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets-scan:
+    name: "Secrets Scan (gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        # The CLI is invoked directly (version + SHA-256 pinned below) rather than through gitleaks-action.
+        # Pinned to a specific version with SHA256 checksum verification for supply-chain
+        # safety. Dependabot cannot bump a version inside a run: block - when bumping,
+        # take the new SHA256 from gitleaks_<ver>_checksums.txt on the release page.
+        run: |
+          GITLEAKS_VERSION="8.30.1"
+          GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          mkdir -p "$HOME/.local/bin"
+          TARBALL="$(mktemp)"
+          curl -sSfL -o "$TARBALL" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${TARBALL}" | sha256sum -c - || { echo "Checksum verification failed!"; exit 1; }
+          tar xzf "$TARBALL" -C "$HOME/.local/bin" gitleaks
+          rm -f "$TARBALL"
+          export PATH="$HOME/.local/bin:$PATH"
+          # `gitleaks git` (8.19+) replaces the deprecated `detect --source`: scans the
+          # full history of the checkout (fetch-depth: 0 above) with gitleaks' built-in
+          # rules (this repository has no .gitleaks.toml).
+          gitleaks git --verbose --redact .
+        shell: bash
