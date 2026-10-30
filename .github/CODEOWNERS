@@ -1,0 +1,9 @@
+# This CODEOWNERS file designates code owners for this repository.
+# CODEOWNERS is not a community health file: it applies to this repository only and is
+# not inherited by other repositories of the account.
+
+# Set the default owner for everything in the repository
+* @Chris-Wolfgang
+
+# Protect the .github folder (workflows, Dependabot config, and this file)
+/.github/ @Chris-Wolfgang
